@@ -25,6 +25,7 @@ import {
   useValidateCouponQuery,
   generateCacheIdIfNew,
 } from "@/core/api/graphql";
+import { FullCartFragmentDoc } from "@/core/api/graphql/types";
 import { useGoogleAnalytics } from "@/core/composables";
 import { ProductType, ValidationErrorObjectType } from "@/core/enums";
 import { groupByVendor } from "@/core/utilities";
@@ -256,10 +257,34 @@ export function _useFullCart() {
     );
   }
 
-  const { mutate: _changeItemQuantity, loading: changeItemQuantityLoading } =
+  const { mutate: changeItemQuantityMutation, loading: changeItemQuantityLoading } =
     useChangeFullCartItemQuantityMutation(cart);
+
+  const updateItemQuantityPending: Set<string> = new Set();
   async function changeItemQuantity(lineItemId: string, quantity: number): Promise<void> {
-    await _changeItemQuantity({ command: { lineItemId, quantity } });
+    updateItemQuantityPending.add(lineItemId);
+    try {
+      await changeItemQuantityMutation(
+        { command: { lineItemId, quantity } },
+        {
+          update(cache, result, { variables }) {
+            if (result.data?.changeCartItemQuantity?.items !== undefined) {
+              cache.updateFragment(
+                {
+                  id: `CartType:${variables?.command?.cartId}`,
+                  fragment: FullCartFragmentDoc,
+                },
+                (cartData) =>
+                  updateItemQuantityPending.has(lineItemId) ? result.data?.changeCartItemQuantity : cartData,
+              );
+            }
+          },
+        },
+      );
+      updateItemQuantityPending.delete(lineItemId);
+    } catch (error) {
+      return;
+    }
   }
 
   const validateCouponLoading = ref(false);
